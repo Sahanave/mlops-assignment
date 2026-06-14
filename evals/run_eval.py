@@ -56,9 +56,72 @@ def matches(gold_rows: list[tuple] | None, pred_rows: list[tuple] | None) -> boo
 
 # ---------- Implement these (Phase 5) ----------------------------------
 
+def _sqls_by_iteration(history: list[dict]) -> list[str]:
+    """Extract the SQL the agent held after each generate/revise step, in order.
+
+    history entries from generate_sql / revise nodes carry a "sql" key. The
+    verify entries don't, so we just skip them. Index 0 is the first attempt
+    (generate_sql), index k>0 is the SQL after the k-th revise.
+    """
+    return [h["sql"] for h in history if "sql" in h]
+
+
 def eval_one(question: dict, agent_url: str) -> dict:
-    """Score one question. Return a dict capturing per-iteration correctness."""
-    raise NotImplementedError("Phase 5")
+    """Score one question via execution accuracy, per iteration.
+
+    Calls the agent, then for every SQL the agent produced (first attempt +
+    each revision) runs it against the target DB and compares its canonicalized
+    rows to the gold query's rows. Records a correctness bool per iteration plus
+    the final served result.
+    """
+    db_id = question["db_id"]
+    gold_sql = question["gold_sql"]
+    gold_ok, gold_rows, gold_err = run_sql(db_id, gold_sql)
+
+    record: dict = {
+        "db_id": db_id,
+        "question": question["question"],
+        "gold_sql": gold_sql,
+        "gold_ok": gold_ok,
+        "gold_error": gold_err,
+    }
+
+    try:
+        resp = httpx.post(
+            agent_url,
+            json={"question": question["question"], "db": db_id},
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:  # noqa: BLE001
+        record.update(
+            agent_ok=False,
+            agent_error=f"{type(e).__name__}: {e}",
+            iterations=0,
+            per_iteration_correct=[],
+            final_sql="",
+            final_correct=False,
+        )
+        return record
+
+    history = data.get("history", [])
+    iter_sqls = _sqls_by_iteration(history) or [data.get("sql", "")]
+
+    per_iter: list[bool] = []
+    for sql in iter_sqls:
+        pred_ok, pred_rows, _ = run_sql(db_id, sql)
+        per_iter.append(bool(gold_ok and pred_ok and matches(gold_rows, pred_rows)))
+
+    record.update(
+        agent_ok=bool(data.get("ok", False)),
+        agent_error=data.get("error"),
+        iterations=data.get("iterations", len(iter_sqls)),
+        final_sql=data.get("sql", iter_sqls[-1] if iter_sqls else ""),
+        per_iteration_correct=per_iter,
+        final_correct=per_iter[-1] if per_iter else False,
+    )
+    return record
 
 
 def summarize(results: list[dict]) -> dict:
@@ -70,7 +133,37 @@ def summarize(results: list[dict]) -> dict:
     The agent stopped emitting; whatever it had at termination is what
     would have been served had we polled at iteration k.
     """
-    raise NotImplementedError("Phase 5")
+    n = len(results)
+    if n == 0:
+        return {"n": 0}
+
+    max_iters = max((len(r["per_iteration_correct"]) for r in results), default=0)
+
+    pass_at_iteration: list[float] = []
+    for k in range(max_iters):
+        correct = 0
+        for r in results:
+            pic = r["per_iteration_correct"]
+            if not pic:
+                continue  # agent never produced a SQL -> wrong at every iteration
+            idx = k if k < len(pic) else len(pic) - 1  # carry forward last attempt
+            if pic[idx]:
+                correct += 1
+        pass_at_iteration.append(round(correct / n, 4))
+
+    overall_correct = sum(1 for r in results if r["final_correct"])
+    agent_failures = sum(1 for r in results if not r.get("agent_ok"))
+    iterations = [r["iterations"] for r in results if r.get("iterations")]
+
+    return {
+        "n": n,
+        "overall_pass_rate": round(overall_correct / n, 4),
+        "overall_correct": overall_correct,
+        "pass_rate_at_iteration": pass_at_iteration,
+        "avg_iterations": round(sum(iterations) / len(iterations), 2) if iterations else 0,
+        "max_iterations_observed": max_iters,
+        "agent_failures": agent_failures,
+    }
 
 
 # ---------- Main (provided) --------------------------------------------
