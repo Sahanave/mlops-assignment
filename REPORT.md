@@ -22,7 +22,7 @@ calls per request, SLO **P95 end-to-end < 5s @ 10+ RPS**. Flags (in `scripts/sta
 | `--enable-chunked-prefill` + `--max-num-batched-tokens 8192` | on / 8192 | Interleave long prefills with decode so a big prompt doesn't stall in-flight generation → steadier TTFT/P95 under mixed load. |
 | `--tensor-parallel-size` | 1 | Single GPU; TP=1 avoids cross-GPU comms latency. |
 
-Manual sanity check: `screenshots/vllm_manual_query.png` ⟨FILL FROM LIVE RUN⟩.
+Manual sanity check: `screenshots/vllm_manual_query.png`.
 
 ---
 
