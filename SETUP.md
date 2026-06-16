@@ -91,3 +91,26 @@ docker compose down            # stop o11y stack (volumes persist)
 docker compose down -v         # also wipe Grafana/Langfuse/Prometheus data
 # vLLM and the agent: just Ctrl-C their terminals
 ```
+
+## Baseline run — exact commands (on the live VM)
+```bash
+uv sync
+uv run python scripts/load_data.py          # downloads BIRD (~500MB)
+docker compose up -d                          # Grafana/Prometheus/Langfuse
+bash scripts/start_vllm.sh                    # own terminal; wait for "Application startup complete"
+# new terminal:
+uv run uvicorn agent.server:app --host 0.0.0.0 --port 8001
+# smoke test one question:
+curl -s localhost:8001/answer -H 'Content-Type: application/json' \
+  -d '{"question":"...", "db":"..."}' | python3 -m json.tool
+# then:
+uv run python evals/run_eval.py --out results/eval_baseline.json
+uv run python load_test/driver.py --rps 10 --duration 300
+```
+
+
+## Reading the dashboard under load
+- Rising **TTFT + queue wait** while *running* is flat ⇒ concurrency-bound → raise `--max-num-seqs` or cut prompt cost.
+- Rising **TPOT** + **KV usage near 100%** + **preemptions > 0** ⇒ decode/KV-bound → FP8, lower `--max-model-len`, or fewer seqs.
+- First panels to check on the load test: **requests waiting + queue-wait p95** vs **KV cache usage %**.
+
