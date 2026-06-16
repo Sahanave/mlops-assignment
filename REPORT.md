@@ -12,17 +12,28 @@ Model: `Qwen/Qwen3-30B-A3B-Instruct-2507` (MoE, 30B total / ~3B active) on 1× H
 Workload: ~1.5–3K-token prompts (schema + question), short SQL outputs, 2–3 dependent
 calls per request, SLO **P95 end-to-end < 5s @ 10+ RPS**. Flags (in `scripts/start_vllm.sh`):
 
-| Flag | Value | Why (for *this* workload) |
-|---|---|---|
-| `--quantization fp8` | fp8 | bf16 weights ~60GB leave little room on 80GB; FP8 (~30GB) frees memory for KV cache → more concurrency. Main quality/throughput lever. |
-| `--max-model-len` | 4096 | Prompts ≤~3K + short outputs. A small context cap shrinks per-request KV footprint, which directly buys concurrent sequences. |
-| `--gpu-memory-utilization` | 0.90 | Maximize KV cache while leaving ~10% for activations/CUDA graphs. |
-| `--max-num-seqs` | 64 | Batch for throughput without queueing so deep P95 breaks 5s. Primary Phase-6 latency knob. |
-| `--enable-prefix-caching` | on | Schema prefix is identical across the 2–3 calls of a request (and reused across questions on the same DB) → skips recomputing 1.5–3K prompt tokens. Biggest single win here. |
-| `--enable-chunked-prefill` + `--max-num-batched-tokens 8192` | on / 8192 | Interleave long prefills with decode so a big prompt doesn't stall in-flight generation → steadier TTFT/P95 under mixed load. |
-| `--tensor-parallel-size` | 1 | Single GPU; TP=1 avoids cross-GPU comms latency. |
+Setup issue: model default context length exceeds available KV cache
+
+Qwen3-30B-A3B defaults to a max sequence length of 262,144 tokens, which requires 24 GiB of KV cache. On an H100 80GB, after loading model weights (~29 GiB), only ~12 GiB remains for KV cache — not enough. vLLM exits with:
+
+ValueError: To serve at least one request with the model's max seq len (262144),
+24.0 GiB KV cache is needed, which is larger than the available KV cache memory (12.35 GiB).
+
+Fix: cap the context length to match the actual workload. Prompts in this assignment are ~1.5–3K tokens (schema + question) and SQL outputs are ~50–200 tokens — 4096 covers everything:
+
+--max-model-len 4096
+
+This reduces KV cache from 24 GiB to ~0.5 GiB, freeing the rest for concurrent requests.
+
+I tested with subset_test_phase1.py and found that requests (subset) were completed within 5seconds (3s) 
+
+P95: 3.89s ✓ under 5s SLO
 
 Manual sanity check: `screenshots/vllm_manual_query.png`.
+
+It is also clear that the model has no context that it needs to generate SQL. When served an eval question directly, it responded with a natural language answer rather than a SQL query. This is expected at this stage — the model has no system prompt to define its role and no schema to write against. Providing both is the work of Phase 3.
+
+Example added under `screenshots/vllm_testing_with_eval.png`.
 
 ---
 

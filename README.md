@@ -45,7 +45,7 @@ If done with curiosity, this assignment will bring you tons of knowledge about h
 -  **Hardware:** 1× H100
 
 -  **Software:** Docker + docker-compose, Python with `python3-dev` headers (vLLM's torch.compile path needs them), uv, git  
-
+sudo apt-get install -y python3.12-dev
 ---
 
 
