@@ -437,3 +437,26 @@ We want to see your thoughts and reasoning process, not the green checkmarks. Sh
 | **Eval rigor** (Phase 5) | 15% | Correct execution-accuracy comparison (canonicalized row sets), overall + per-iteration pass rate, and an honest read on whether the loop earns its keep. |
 | **SLO diagnosis & iteration** (Phase 6) | 25% | A metric-grounded iteration log - *"saw X → hypothesized Y → changed Z → result W"* - with before/after evidence the targeted metric moved, and whether end-to-end latency *and* quality followed. Diagnosis quality counts more than hitting the number. |
 | **Report & communication** (Phase 7) | 15% | `REPORT.md` clear, honest about misses, ≤3 pages, and "what I'd do with more time" is specific (not "add Kubernetes"). |
+
+
+
+Extra (for vllm in docker)
+sudo apt-get update -y && \
+    sudo apt-get install -y nvidia-container-toolkit && \
+    sudo nvidia-ctk runtime configure --runtime=docker && \
+    sudo apt install -y docker-compose && \
+    sudo adduser "$(id -un)" docker && \
+    sudo systemctl restart docker
+
+
+docker run --gpus all -v ./infra:/infra -v ~/.cache/huggingface:/root/.cache/huggingface \
+    -p 8000:8000 \
+        --ipc=host \
+     vllm/vllm-openai:v0.22.1 --config /infra/vllm_config.yaml
+
+for benchmarking performance 
+vllm bench serve \
+  --model <your-model> \
+  --dataset-name random \
+  --num-prompts 100 \
+  --base-url http://localhost:8000
