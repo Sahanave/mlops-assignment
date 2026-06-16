@@ -59,6 +59,8 @@ Screenshot under load: `screenshots/grafana_serving.png` ⟨FILL FROM LIVE RUN�
 
 ## 3. Agent design (Phase 3)
 
+1.  Using Structured Output: Structured output is more reliable than string parsing — instead of regex-scraping SQL from markdown fences or JSON from prose, we bind each LLM call to a Pydantic model (SQLOutput, Verdict) so vLLM enforces the schema at the output layer. This eliminates a whole class of silent failures where the parser succeeds but extracts the wrong thing.
+
 LangGraph: `attach_schema → generate_sql → execute → verify →` (`route_after_verify`) →
 `revise → execute → verify` … capped at `MAX_ITERATIONS = 3`.
 

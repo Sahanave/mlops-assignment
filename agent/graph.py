@@ -16,15 +16,13 @@ conditional router following the same shape.
 """
 from __future__ import annotations
 
-import json
 import os
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-
+from pydantic import BaseModel
 from agent import prompts
 from agent.execution import ExecutionResult, execute_sql
 from agent.schema import render_schema
@@ -38,6 +36,15 @@ VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507")
 # vLLM ignores the key, but a hosted OpenAI-compatible provider needs a real one.
 # Lets you point the agent at e.g. OpenAI while iterating without a running vLLM.
 LLM_API_KEY = os.environ.get("OPENAI_API_KEY", "not-needed")
+
+
+
+class SQLOutput(BaseModel):
+    sql: str
+
+class Verdict(BaseModel):
+    ok: bool
+    issue: str
 
 
 @dataclass
@@ -72,16 +79,6 @@ def _attach_schema(state: AgentState) -> dict:
     return {"schema": render_schema(state.db_id)}
 
 
-def _extract_sql(text: str) -> str:
-    """Pull a SQL statement out of an LLM reply, stripping markdown fences/prose.
-
-    Intentionally simple: take the first ```sql ... ``` block if there is one,
-    otherwise the whole reply. You may need to harden this for your prompts.
-    """
-    fenced = re.search(r"```(?:sql)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    return (fenced.group(1) if fenced else text).strip()
-
-
 def generate_sql_node(state: AgentState) -> dict:
     """Worked example - the other LLM nodes follow this same shape.
 
@@ -92,18 +89,17 @@ def generate_sql_node(state: AgentState) -> dict:
     This node is wired and ready; fill in GENERATE_SQL_SYSTEM / GENERATE_SQL_USER
     in prompts.py to make it produce real queries.
     """
-    response = llm().invoke([
+    response = llm().with_structured_output(SQLOutput, method="json_schema").invoke([
         ("system", prompts.GENERATE_SQL_SYSTEM),
         ("user", prompts.GENERATE_SQL_USER.format(
             schema=state.schema,
             question=state.question,
         )),
     ])
-    sql = _extract_sql(response.content)
     return {
-        "sql": sql,
+        "sql": response.sql,
         "iteration": state.iteration + 1,
-        "history": state.history + [{"node": "generate_sql", "sql": sql}],
+        "history": state.history + [{"node": "generate_sql", "sql": response.sql}],
     }
 
 
@@ -111,26 +107,6 @@ def execute_node(state: AgentState) -> dict:
     """Provided. Runs the SQL and stores the result."""
     return {"execution": execute_sql(state.db_id, state.sql)}
 
-
-def _parse_verdict(text: str) -> dict:
-    """Pull a {"ok": bool, "issue": str} object out of an LLM reply.
-
-    Defensive: the model may wrap the JSON in prose or a code fence. We grab the
-    first balanced-looking {...} span and json.loads it. If nothing parses we
-    default to ok=true so a flaky verifier degrades to "ship it" rather than
-    looping forever on unparseable output (the iteration cap is the backstop).
-    """
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        try:
-            obj = json.loads(match.group(0))
-            return {
-                "ok": bool(obj.get("ok", True)),
-                "issue": str(obj.get("issue", "") or ""),
-            }
-        except (json.JSONDecodeError, AttributeError):
-            pass
-    return {"ok": True, "issue": ""}
 
 
 def verify_node(state: AgentState) -> dict:
@@ -141,7 +117,7 @@ def verify_node(state: AgentState) -> dict:
     which already encodes the obvious failure cases (ERROR / 0 rows) in text,
     so the prompt can catch them.
     """
-    response = llm().invoke([
+    response = llm().with_structured_output(Verdict, method="json_schema").invoke([
         ("system", prompts.VERIFY_SYSTEM),
         ("user", prompts.VERIFY_USER.format(
             question=state.question,
@@ -149,11 +125,10 @@ def verify_node(state: AgentState) -> dict:
             result=state.execution.render() if state.execution else "no result",
         )),
     ])
-    verdict = _parse_verdict(response.content)
     return {
-        "verify_ok": verdict["ok"],
-        "verify_issue": verdict["issue"],
-        "history": state.history + [{"node": "verify", **verdict}],
+        "verify_ok": response.ok,
+        "verify_issue": response.issue,
+        "history": state.history + [{"node": "verify", "ok": response.ok, "issue": response.issue}],
     }
 
 
@@ -164,7 +139,7 @@ def revise_node(state: AgentState) -> dict:
     execution result, and the issue so the model can actually fix it. Bumps
     iteration so the loop terminates at MAX_ITERATIONS.
     """
-    response = llm().invoke([
+    response = llm().with_structured_output(SQLOutput, method="json_schema").invoke([
         ("system", prompts.REVISE_SYSTEM),
         ("user", prompts.REVISE_USER.format(
             schema=state.schema,
@@ -174,11 +149,10 @@ def revise_node(state: AgentState) -> dict:
             issue=state.verify_issue,
         )),
     ])
-    sql = _extract_sql(response.content)
     return {
-        "sql": sql,
+        "sql": response.sql,
         "iteration": state.iteration + 1,
-        "history": state.history + [{"node": "revise", "sql": sql}],
+        "history": state.history + [{"node": "revise", "sql": response.sql}],
     }
 
 
