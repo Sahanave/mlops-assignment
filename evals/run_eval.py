@@ -66,7 +66,7 @@ def _sqls_by_iteration(history: list[dict]) -> list[str]:
     return [h["sql"] for h in history if "sql" in h]
 
 
-def eval_one(question: dict, agent_url: str) -> dict:
+def eval_one(question: dict, agent_url: str, tags: dict | None = None) -> dict:
     """Score one question via execution accuracy, per iteration.
 
     Calls the agent, then for every SQL the agent produced (first attempt +
@@ -89,7 +89,7 @@ def eval_one(question: dict, agent_url: str) -> dict:
     try:
         resp = httpx.post(
             agent_url,
-            json={"question": question["question"], "db": db_id},
+            json={"question": question["question"], "db": db_id, "tags": tags or {}},
             timeout=120.0,
         )
         resp.raise_for_status()
@@ -171,29 +171,52 @@ def summarize(results: list[dict]) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval-set", type=Path, default=DEFAULT_EVAL_FILE)
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT_FILE)
+    parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--agent-url", default=AGENT_URL_DEFAULT)
+    parser.add_argument("--model", default=None, help="Tag this run with a model name (e.g. Qwen3-30B-A3B)")
+    parser.add_argument("--tag", action="append", default=[], metavar="KEY=VALUE",
+                        help="Repeatable; e.g. --tag experiment=perf_tuned --tag iteration=2")
     args = parser.parse_args()
+
+    run_tags: dict = {}
+    if args.model:
+        run_tags["model"] = args.model
+    for kv in args.tag:
+        k, _, v = kv.partition("=")
+        if k:
+            run_tags[k] = v
+
+    if args.out is None:
+        if args.model:
+            slug = args.model.replace("/", "_").replace(":", "_")
+            out_path = ROOT / "results" / f"eval_{slug}.json"
+        else:
+            out_path = DEFAULT_OUT_FILE
+    else:
+        out_path = args.out
 
     questions = [json.loads(line) for line in args.eval_set.read_text().splitlines() if line.strip()]
     print(f"Loaded {len(questions)} eval questions from {args.eval_set}")
+    if run_tags:
+        print(f"Tags: {run_tags}")
 
     results: list[dict] = []
     t0 = time.monotonic()
     for i, q in enumerate(questions, 1):
         print(f"[{i}/{len(questions)}] {q['db_id']}: {q['question'][:60]}...", flush=True)
-        results.append(eval_one(q, args.agent_url))
+        results.append(eval_one(q, args.agent_url, tags=run_tags))
     elapsed = time.monotonic() - t0
 
     summary = summarize(results)
     out = {
         "summary": summary,
+        "tags": run_tags,
         "wall_clock_seconds": elapsed,
         "results": results,
     }
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(out, indent=2))
-    print(f"Wrote {args.out}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(out, indent=2))
+    print(f"Wrote {out_path}")
     print(json.dumps(summary, indent=2))
 
 

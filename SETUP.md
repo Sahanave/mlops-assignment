@@ -6,6 +6,57 @@ higher-level plan and what to submit, see `sahaan_to_do.md`.
 
 ---
 
+## Local development (macOS, no H100)
+
+Use this to build and test the agent on your laptop against OpenAI before touching the VM.
+`vllm` has no macOS wheels, so install only the agent deps.
+
+**1. Install agent dependencies into `.venv`:**
+```bash
+.venv/bin/python -m ensurepip
+.venv/bin/python -m pip install \
+  "langgraph>=1.0,<2.0" "langchain>=1.0,<2.0" "langchain-openai>=1.0,<2.0" \
+  "langfuse>=4.0,<5.0" "fastapi>=0.115,<1.0" "uvicorn[standard]>=0.30,<1.0" \
+  "pydantic>=2.0,<3.0" "python-dotenv>=1.0,<2.0" \
+  "httpx>=0.27,<1.0" "tqdm>=4.66,<5.0" "datasets>=2.20"
+```
+
+**2. Configure `.env` to point at OpenAI:**
+```bash
+cp .env.example .env
+```
+Uncomment and fill in these three lines in `.env`:
+```
+VLLM_BASE_URL=https://api.openai.com/v1
+VLLM_MODEL=gpt-4o-mini
+OPENAI_API_KEY=sk-...
+```
+
+**3. Download BIRD data:**
+```bash
+.venv/bin/python scripts/load_data.py
+```
+Verify: `wc -l evals/eval_set.jsonl` → 30
+
+**4. Start the agent server:**
+```bash
+PYTHONPATH=. .venv/bin/uvicorn agent.server:app --host 0.0.0.0 --port 8001 --reload
+```
+(`PYTHONPATH=.` makes `import agent` resolve; `--reload` restarts on file saves.)
+
+**5. Smoke-test:**
+```bash
+curl -s localhost:8001/health
+# → {"status":"ok"}
+
+curl -s -X POST localhost:8001/answer \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What is the coordinates location of the circuits for Australian grand prix?","db":"formula_1"}' \
+  | python3 -m json.tool
+```
+
+---
+
 ## 0. Connect + forward ports
 - [ ] SSH into the VM, forwarding all five ports:
   ```bash
@@ -114,3 +165,15 @@ uv run python load_test/driver.py --rps 10 --duration 300
 - Rising **TPOT** + **KV usage near 100%** + **preemptions > 0** ⇒ decode/KV-bound → FP8, lower `--max-model-len`, or fewer seqs.
 - First panels to check on the load test: **requests waiting + queue-wait p95** vs **KV cache usage %**.
 
+
+
+
+Example commands for the H100 run:
+# Experiment 1 — baseline vLLM config
+uv run python evals/run_eval.py --model Qwen3-30B-A3B --tag experiment=baseline
+
+# Experiment 2 — perf-tuned (restart vLLM with start_vllm_final.sh first)
+uv run python evals/run_eval.py --model Qwen3-30B-A3B --tag experiment=perf_tuned
+
+# Experiment 3 — Nebius hosted model (set .env, restart agent server)
+uv run python evals/run_eval.py --model Qwen3-235B-A22B --tag experiment=nebius

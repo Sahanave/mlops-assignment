@@ -53,15 +53,20 @@ the result plausibly answers the question.
 
 Mark it NOT ok (ok=false) when any of these clearly hold:
 - The execution returned an ERROR.
-- Zero rows were returned but the question implies at least one row should exist
-  (e.g. "which", "list", "how many ... that ...", "the most ...").
+- Zero rows were returned AND the SQL is not an aggregate (COUNT/SUM/AVG/MAX/MIN)
+  AND the question names a specific real entity or uses a superlative ("the most",
+  "the highest", "the school with the best") that strongly implies a result must
+  exist. Do NOT flag zero rows merely because the question contains "which" or
+  "list" — those questions can have legitimately empty answers (e.g. "which
+  students failed every exam", "list products with no sales").
 - The returned columns plainly do not answer what was asked (e.g. the question
   asks for a name but only an id was returned, or an aggregate was asked for but
   raw rows came back).
 - The result is obviously wrong in shape (e.g. many rows when a single value was
   asked for).
 
-Otherwise mark it ok=true. Do not nitpick correct-looking results.
+Otherwise mark it ok=true. When in doubt, mark ok=true — the iteration cap is
+the backstop against runaway loops.
 
 Respond with ONLY a JSON object on a single line:
 {"ok": true or false, "issue": "<short reason, empty string if ok>"}"""
