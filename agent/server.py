@@ -57,7 +57,10 @@ def answer(req: AnswerRequest) -> AnswerResponse:
     state = AgentState(question=req.question, db_id=req.db)
     config: dict[str, Any] = {
         "callbacks": [_lf_handler] if _lf_handler is not None else [],
-        "metadata": req.tags,
+        "metadata": {
+            **req.tags,
+            "langfuse_tags": [f"{k}:{v}" for k, v in req.tags.items()],
+        },
     }
     try:
         final = graph.invoke(state, config=config)
