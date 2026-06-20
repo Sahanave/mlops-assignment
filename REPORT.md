@@ -75,8 +75,6 @@ LangGraph: `attach_schema → generate_sql → execute → verify →` (`route_a
 Prompts (`agent/prompts.py`) keep the rules in a **stable system prefix** (no per-request
 data) so vLLM prefix caching reuses it, with variable input in the user message.
 
-Revise trigger observed in interactive testing: 
-
 ---
 
 ## 4. Agent tracing (Phase 4)
@@ -84,8 +82,9 @@ Revise trigger observed in interactive testing:
 Langfuse callback is wired in `agent/server.py` (initialized when `LANGFUSE_*` keys are
 set; failures are not swallowed). Per-request `tags` are passed through as trace metadata
 for Phase-6 filtering. Inspected trace (generate/verify/revise waterfall):
-`screenshots/langfuse_trace.png`; tag list: `screenshots/langfuse_tags.png` ⟨FILL FROM LIVE RUN⟩.
-
+`screenshots/langfuse_trace.png`; tag list: `screenshots/langfuse_tags.png` 
+I added experiment and model tags to track through prompt improvmements and testing different models. 
+It was also helpful to observe token usage and latency of reasoning models such as openai_gpt-oss-120b.
 ---
 
 ## 5. Baseline eval (Phase 5)
@@ -95,7 +94,7 @@ iteration and the gold SQL against the target DB, compares canonicalized row set
 (sorted, stringified, `None`→`""`). Per-iteration pass rate uses carry-forward — if the
 agent stopped at iteration *j < k*, its iteration-*k* result = its iteration-*j* result.
 
-> **Note:** this baseline was run locally against `gpt-4o-mini` (OpenAI API), not the
+> **Note:** this baseline was run locally against `gpt-4o-mini` (OpenAI API) not the
 > production `Qwen3-30B-A3B` endpoint. The purpose was to validate the eval pipeline and
 > agent loop end-to-end before the H100 was available. These numbers are not representative
 > of production quality — real pass rates must come from the 30B endpoint (see `results/eval_after_tuning.json`).
@@ -122,6 +121,47 @@ The absolute 36.67% is expected for `gpt-4o-mini` on BIRD — it's a hard benchm
 complex multi-join queries and `gpt-4o-mini` is not a strong text-to-SQL model. The
 architecture validation is what matters here: zero agent failures, the pipeline runs
 end-to-end, and the loop demonstrably helps.
+
+
+**Iteration 2 — 120B open-source model via Nebius AI Studio:**
+
+| Metric | Value |
+|---|---|
+| Overall pass rate | 30.0% (9/30) |
+| Pass @ iter 0 / 1 / 2 | 30.0% → 30.0% → 30.0% |
+| Avg iterations | 1.2 |
+| Agent failures | 0 |
+
+The loop added no value: pass rate was flat across all three iterations. The root cause is
+self-confirmation bias — when the same large model acts as both generator and verifier, it
+tends to approve its own outputs. The 120B model produces SQL that looks structurally
+plausible (correct tables, non-zero rows, right column names) even when semantically wrong,
+so the verifier rarely triggers a revision. Avg iterations of 1.2 confirms this: most
+requests terminated after the first attempt. The architecture is sound but the verifier
+needs to be independent of the generator to catch these failures.
+
+**Prompt tuning experiment — tightening the zero-rows heuristic:**
+
+A hypothesis was that the verifier's zero-rows rule was too aggressive — flagging "which"
+and "list" questions that might legitimately return empty results. The rule was narrowed to
+only trigger on questions naming specific entities or using superlatives ("the most X",
+"the highest Y").
+
+| Metric | Original | Tuned |
+|---|---|---|
+| Overall pass rate | 36.67% | 26.67% |
+| Pass @ iter 0 / 1 / 2 | 26.67% → 33.33% → **36.67%** | 23.33% → 26.67% → **26.67%** |
+| Avg iterations | 1.6 | 1.53 |
+| Agent failures | 0 | 1 |
+
+The change introduced a regression. The original rule was empirically correct for BIRD:
+"which" and "list" questions on this benchmark almost always expect results — zero rows
+means a bad JOIN or wrong filter, not a legitimately empty answer. Suppressing that trigger
+stopped the loop from catching real failures, reducing its contribution from +10pp to
++3.3pp. The 1 agent failure also removed one previously-correct question, explaining the
+drop in pass@0. The fix was to restore the original rule and add only a narrow exception
+for questions that explicitly ask about absence ("students with no enrollment", "products
+never sold").
 
 From the Grafana dashboard during the Phase 5 eval run, I observed that KV cache utilization stays near zero between requests. This is expected: the eval script sends one request at a time sequentially, so there are no concurrent requests and no batching. Each request is processed independently — the GPU cache fills briefly during generation and drains immediately after. Between requests, the GPU sits idle. There is no prefix cache reuse across questions even though the system prompt and schema are repeated for every call.
 ---

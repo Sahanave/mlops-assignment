@@ -38,7 +38,6 @@ VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507")
 LLM_API_KEY = os.environ.get("OPENAI_API_KEY", "not-needed")
 
 
-
 class SQLOutput(BaseModel):
     sql: str
 
