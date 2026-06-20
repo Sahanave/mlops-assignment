@@ -169,6 +169,33 @@ From the Grafana dashboard during the Phase 5 eval run, I observed that KV cache
 ## 6. Hitting the SLO (Phase 6)
 
 1. based on previous observations and the low latency, I added prefix caching and allowing for batching sequences. 
+first run : 
+
+{
+  "requested_rps": 10.0,
+  "duration_seconds": 300,
+  "wall_clock_seconds": 360.0042169589997,
+  "total_requests": 3000,
+  "achieved_rps": 8.3332357196851,
+  "ok": 2578,
+  "timeouts": 17,
+  "http_errors": 376,
+  "client_errors": 29,
+  "latency_p50": 30.002315063000424,
+  "latency_p95": 88.37885656900016,
+  "latency_p99": 94.33577264200085,
+  "latency_max": 109.2530676489996
+}
+
+- Request throughput panel — "length" finish reason is visible alongside "stop." Requests finishing at "length" means they're being cut off at max_tokens before the SQL is complete. Truncated SQL → execution error → unnecessary revise call → extra latency. Fix: increase max_tokens in the agent LLM call.
+- KV cache panel — peaked at 36% with no preemptions. The GPU has significant headroom that is going unused. Fix: increase --max-num-seqs to admit more concurrent requests and fill that headroom.
+- Running requests panel — bursty mountain shape, dropping low between waves. This confirms requests are not being batched smoothly — the queue empties and refills rather than staying full. Increasing --max-num-seqs directly addresses this by keeping more requests in flight at once.
+- Token throughput panel — prompt tokens/s dominates, gen tokens/s is negligible. This is consistent with short or truncated outputs. Fixing max_tokens should raise the gen tokens line.
+
+1. Increase output sequence length (max_tokens) → fixes the "length" truncations → reduces avoidable revise calls
+2. Increase batching (--max-num-seqs) → fills the unused KV headroom → smooths the mountain pattern
+
+I increased max_tokens to 512 and --max-num-seqs to 100. I then saw KV cache hit 100%, preemptions appearing, e2e degrading to 8–10s  I therefore reduced the max_num_seqs to 50. 
 
 Target: **P95 e2e agent latency < 5s, 10+ RPS over 5 min.**
 

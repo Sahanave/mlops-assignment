@@ -68,7 +68,8 @@ def llm() -> ChatOpenAI:
         base_url=VLLM_BASE_URL,
         api_key=LLM_API_KEY,
         temperature=0.0,
-    )
+        max_tokens=512)
+
 
 
 # ---- Nodes ------------------------------------------------------------
