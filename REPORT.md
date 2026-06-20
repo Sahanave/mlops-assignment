@@ -205,7 +205,7 @@ Target: **P95 e2e agent latency < 5s, 10+ RPS over 5 min.**
 > p50 0.89s, **p95 2.66s (under SLO)**, p99 6.37s, max 52s, but **381 HTTP errors / 3000 (~13%)**.
 > That shape — good P95 but a fat error tail and achieved RPS short of target — points at
 > the server/queue rejecting or timing out under burst, not raw decode speed. First thing
-> I'd check on my own run: `num_requests_waiting` + queue-wait p95 vs `gpu_cache_usage_perc`.
+> I'd check on my own run: `num_requests_waiting` + queue-wait p95 vs `kv_cache_usage_perc`.
 
 **Iteration log** (fill one line per change):
 
