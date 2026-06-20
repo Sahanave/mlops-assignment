@@ -123,12 +123,14 @@ complex multi-join queries and `gpt-4o-mini` is not a strong text-to-SQL model. 
 architecture validation is what matters here: zero agent failures, the pipeline runs
 end-to-end, and the loop demonstrably helps.
 
+From the Grafana dashboard during the Phase 5 eval run, I observed that KV cache utilization stays near zero between requests. This is expected: the eval script sends one request at a time sequentially, so there are no concurrent requests and no batching. Each request is processed independently — the GPU cache fills briefly during generation and drains immediately after. Between requests, the GPU sits idle. There is no prefix cache reuse across questions even though the system prompt and schema are repeated for every call.
 ---
 
 ## 6. Hitting the SLO (Phase 6)
 
+1. based on previous observations and the low latency, I added prefix caching and allowing for batching sequences. 
+
 Target: **P95 e2e agent latency < 5s, 10+ RPS over 5 min.**
-Run: `uv run python load_test/driver.py --rps 10 --duration 300`.
 
 **Baseline:** ⟨FILL FROM LIVE RUN⟩.
 

@@ -29,3 +29,10 @@ exec uv run python -m vllm.entrypoints.openai.api_server \
     --max-model-len 4096 \
     `# Leave ~10% headroom for activations/CUDA graphs while maximizing KV cache space.` \
     --gpu-memory-utilization 0.90 
+    `# Cap concurrent sequences so we batch for throughput without queueing so deep that` \
+    `# P95 blows past 5s. 64 is a starting point - this is the main Phase 6 latency lever.` \
+    --max-num-seqs 64 \
+    `# THE big win for this workload: the schema prefix is identical across the 2-3 calls of` \
+    `# a request (and reused across questions on the same DB), so prefix caching skips` \
+    `# recomputing 1.5-3K prompt tokens on the verify/revise calls.` \
+    --enable-prefix-caching 

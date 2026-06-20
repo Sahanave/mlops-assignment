@@ -177,3 +177,31 @@ uv run python evals/run_eval.py --model Qwen3-30B-A3B --tag experiment=perf_tune
 
 # Experiment 3 — Nebius hosted model (set .env, restart agent server)
 uv run python evals/run_eval.py --model Qwen3-235B-A22B --tag experiment=nebius
+
+
+What's happening: vLLM uses torch.compile with the Triton/Inductor backend to JIT-compile GPU kernels. During that process, Triton tries to build a small C extension (cuda_utils.c) that needs Python's development headers (Python.h). Those headers aren't installed on the machine.
+
+The gcc command it tried to run included -I/usr/include/python3.12, but that directory either doesn't exist or is missing Python.h because the python3.12-dev package isn't installed.
+
+Fix — install the Python dev headers on the server:
+
+sudo apt install python3.12-dev
+
+Then retry starting vLLM. That should let Triton compile the CUDA utils extension successfully.
+
+
+{
+  "requested_rps": 10.0,
+  "duration_seconds": 300,
+  "wall_clock_seconds": 360.00408622899977,
+  "total_requests": 3000,
+  "achieved_rps": 8.333238745772709,
+  "ok": 2210,
+  "timeouts": 18,
+  "http_errors": 372,
+  "client_errors": 400,
+  "latency_p50": 3.162554307999926,
+  "latency_p95": 85.65495166100027,
+  "latency_p99": 101.5177132939998,
+  "latency_max": 113.67026299899999
+}
