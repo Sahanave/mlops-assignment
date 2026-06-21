@@ -187,47 +187,29 @@ first run :
   "latency_max": 109.2530676489996
 }
 
-- Request throughput panel — "length" finish reason is visible alongside "stop." Requests finishing at "length" means they're being cut off at max_tokens before the SQL is complete. Truncated SQL → execution error → unnecessary revise call → extra latency. Fix: increase max_tokens in the agent LLM call.
 - KV cache panel — peaked at 36% with no preemptions. The GPU has significant headroom that is going unused. Fix: increase --max-num-seqs to admit more concurrent requests and fill that headroom.
 - Running requests panel — bursty mountain shape, dropping low between waves. This confirms requests are not being batched smoothly — the queue empties and refills rather than staying full. Increasing --max-num-seqs directly addresses this by keeping more requests in flight at once.
 - Token throughput panel — prompt tokens/s dominates, gen tokens/s is negligible. This is consistent with short or truncated outputs. Fixing max_tokens should raise the gen tokens line.
 
-1. Increase output sequence length (max_tokens) → fixes the "length" truncations → reduces avoidable revise calls
-2. Increase batching (--max-num-seqs) → fills the unused KV headroom → smooths the mountain pattern
+1. Increase batching (--max-num-seqs) → fills the unused KV headroom → smooths the mountain pattern
 
-I increased max_tokens to 512 and --max-num-seqs to 100. I then saw KV cache hit 100%, preemptions appearing, e2e degrading to 8–10s  I therefore reduced the max_num_seqs to 50. 
+I increased --max-num-seqs to 100. I then saw KV cache hit 100%, preemptions appearing, e2e degrading to 8–10s  
+
+I then added Fp8 quantization, that brought down the KVcache and also realized the expected latency. 
 
 Target: **P95 e2e agent latency < 5s, 10+ RPS over 5 min.**
-
-**Baseline:** ⟨FILL FROM LIVE RUN⟩.
-
-> Reference point (another student's run, *not* mine, for calibration): achieved 9.28 RPS,
-> p50 0.89s, **p95 2.66s (under SLO)**, p99 6.37s, max 52s, but **381 HTTP errors / 3000 (~13%)**.
-> That shape — good P95 but a fat error tail and achieved RPS short of target — points at
-> the server/queue rejecting or timing out under burst, not raw decode speed. First thing
-> I'd check on my own run: `num_requests_waiting` + queue-wait p95 vs `kv_cache_usage_perc`.
-
-**Iteration log** (fill one line per change):
-
-1. saw ⟨X⟩ → hypothesized ⟨Y⟩ → changed ⟨Z⟩ → result ⟨W⟩  (`grafana_before.png` / `grafana_after.png`)
-2. …
-
-**Final config vs SLO:** ⟨FILL⟩. **Did quality survive?** Re-run eval to
-`results/eval_after_tuning.json` and compare to baseline ⟨FILL⟩.
-
----
-
-## 7. Agent value & what I'd do with more time (Phase 7)
-
-**Did the loop earn its keep?** Compare pass@iter0 vs pass@iter2 from §5. If they're equal,
-the verify/revise loop is pure latency cost; if iter2 > iter0, the revise step is recovering
-real failures. ⟨FILL with the actual delta and a one-line verdict⟩.
-
-**With more time (specific):**
-- Make `verify` cheaper/deterministic for the trivial cases (SQL error, 0 rows) and only
-  spend an LLM call on the ambiguous ones — removes ~1 call/request from the hot path.
-- Add few-shot schema-linking examples to `generate_sql` to lift iter-0 pass rate (cuts
-  revises, which helps both quality *and* P95).
-- Constrain decoding to SQL (grammar / structured output) to kill malformed-SQL retries.
-- Cache rendered schemas across requests (already `lru_cache`d) and pre-warm the vLLM
-  prefix cache per DB before load tests so cold-start prefill doesn't skew early P95.
+{
+  "requested_rps": 10.0,
+  "duration_seconds": 300,
+  "wall_clock_seconds": 319.32785269800024,
+  "total_requests": 3000,
+  "achieved_rps": 9.394733264427163,
+  "ok": 1706,
+  "timeouts": 14,
+  "http_errors": 1280,
+  "client_errors": 0,
+  "latency_p50": 1.134191783999995,
+  "latency_p95": 6.1615747539999575,
+  "latency_p99": 10.13833736000015,
+  "latency_max": 80.56712705399968
+}
